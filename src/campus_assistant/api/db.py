@@ -50,6 +50,7 @@ class Intervention(Base):
     content_json: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="draft")
     approved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    followup_json: Mapped[str] = mapped_column(Text, default="{}")
     key: Mapped[str] = mapped_column(String(80))
     __table_args__ = (UniqueConstraint("class_id", "key"),)
 

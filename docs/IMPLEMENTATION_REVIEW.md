@@ -1,11 +1,11 @@
 # Implementation review — v0.2
 
 ## PRD implementation mapping
-FR01: input score API tervalidasi; import massal belum tersedia.
+FR01: tabel nilai, impor CSV preview/confirm, validasi all-or-nothing dan pemeriksaan revision tersedia.
 FR02–03: Outcome Engine, versi formula, evidence ID, missing, CPL course scope tersedia.
 FR04: draft template deterministik; katalog materi dan provider AI belum ada.
 FR05: content immutable; approval dan publication menjadi satu transaksi dosen; stale snapshot diblokir. Tidak ada edit content endpoint.
-FR06: hasil tindak lanjut belum tersedia.
+FR06: penolakan draft, status selesai, catatan dan nilai hasil tindak lanjut tersedia; nilai hasil tidak mengganti assessment resmi.
 FR07: audit actions dan baseline measurement tersedia; token/cost agent belum relevan tanpa provider.
 
 ## Formula yang dibekukan
@@ -20,7 +20,7 @@ Authorization object/class membership, session revoke, idempotency, missing evid
 - Rate limit login in-memory per proses. Session cleanup otomatis dan IP map eviction belum ada. Perlu shared limiter sebelum multi-worker.
 - SQLite tidak memiliki row-level FOR UPDATE. Pilot lokal satu proses saja. PostgreSQL class row lock mengurutkan update skor dan approval; perlu concurrency regression pada database nyata.
 - Revision kelas global menginvalidasi semua draft jika skor satu mahasiswa berubah: konservatif tetapi dapat meningkatkan beban review. Per-student revision ditunda.
-- Audit durable per transaksi tetapi belum immutable/tamper-evident dan belum endpoint export.
+- Audit durable per transaksi tetapi belum immutable/tamper-evident dan ekspor outcome CSV tersedia; export audit belum tersedia.
 - Header security/CSP, multi-role institution auth, reset credentials, monitoring, retention dan restore drill belum selesai.
 - Baseline measurement dapat memasukkan arm C secara manual; label bukan bukti provider AI benar-benar digunakan. Reviewer wajib memvalidasi protokol.
 - Draft approved immutable dan tercatat; belum ada portal mahasiswa atau pengiriman eksternal.

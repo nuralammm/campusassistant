@@ -13,3 +13,8 @@
 - PostgreSQL compose disediakan tetapi belum diuji karena Docker/PostgreSQL server tidak tersedia di runtime ini. Konkurensi multi-worker, backup/restore dan institutional integration belum diuji.
 
 Tidak ada data mahasiswa nyata atau provider LLM live digunakan. ROI/payback pada demo adalah contoh sintetis. Release operasional tetap HOLD.
+
+## Dashboard administration extension
+- 24 Python tests passed, including class/student management, mapping update, stale batch rejection, invalid CSV, atomic import, followup transitions, export formula injection protection, unauthorized access and ROI scenario.
+- Full HTTP admin smoke passed: class creation, student creation, score form, multipart CSV preview without write, report rendering/export, ROI scenario and logout. Script `scripts/smoke_admin.py` uses only a synthetic database and adds test classes.
+- Svelte type check/build rerun for academic and reports routes. Browser visual/E2E and PostgreSQL remain pending as above.

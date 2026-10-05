@@ -2,6 +2,16 @@
 
 Aplikasi baru untuk pilot satu kelas: Outcome Engine deterministik, API FastAPI, database SQLAlchemy + Alembic, dan dashboard SvelteKit/Svelte 5. Data awal sintetis. JEV memeriksa izin, bukti, versi snapshot, dan penghentian tindakan. Draft intervensi saat ini berbasis aturan; tidak memakai layanan AI berbayar.
 
+## Dashboard lengkap
+
+- **Ringkasan kelas:** capaian CPMK dinamis dan learning gap.
+- **Data Akademik:** tambah kelas/mahasiswa, ubah nama, tabel input nilai, pengaturan CPMK/CPL/assessment, preview dan konfirmasi impor CSV, riwayat perubahan.
+- **Intervensi:** draft, persetujuan, penolakan dengan alasan, pencatatan selesai dan hasil tindak lanjut.
+- **Evaluasi pilot:** pengukuran waktu/biaya per kasus.
+- **Laporan & ekspor:** tabel CPMK/CPL, ekspor CSV dan kalkulator skenario ROI (bukan keputusan release otomatis).
+
+Setelah memperbarui branch, jalankan `uv run alembic upgrade head` untuk kolom tindak lanjut. Pilih kelas di Data Akademik, lalu gunakan tautan Ringkasan/Laporan untuk kelas tersebut.
+
 ## Yang sudah tersedia
 - Login dosen dengan session opaque 8 jam, token disimpan sebagai hash di database.
 - Password PBKDF2; cookie frontend HttpOnly dan SameSite; backend diakses melalui server SvelteKit.
@@ -95,4 +105,4 @@ docs/                 # spesifikasi, pilot dan verification
 
 ## Batas versi ini
 
-Pilot dosen satu kelas; belum portal mahasiswa/prodi, import CSV, penolakan/edit draft, monitoring hasil intervensi, integrasi kampus, atau provider LLM. Tidak ada perubahan nilai resmi. Rate limit login bersifat per-proses, bukan distributed. SQLite untuk satu proses lokal; perilaku konkurensi/PostgreSQL perlu verifikasi sebelum pilot operasional. Audit mencatat tindakan dalam database, belum tamper-evident. Kredensial/reset password, retention, HTTPS dan operasional institusi perlu rancangan sebelum release. Status GO untuk percobaan sintetis, HOLD untuk data nyata dan release. Lihatdocs/IMPLEMENTATION_REVIEW.md.
+Pilot dosen dengan beberapa kelas; belum portal mahasiswa/prodi, edit teks draft, integrasi kampus, atau provider LLM. Setiap ID mahasiswa unik secara global dalam pilot; belum mendukung satu mahasiswa terdaftar di beberapa kelas. Catatan hasil intervensi tidak mengubah nilai assessment secara otomatis. Tidak ada perubahan nilai resmi. Rate limit login bersifat per-proses, bukan distributed. SQLite untuk satu proses lokal; perilaku konkurensi/PostgreSQL perlu verifikasi sebelum pilot operasional. Audit mencatat tindakan dalam database, belum tamper-evident. Kredensial/reset password, retention, HTTPS dan operasional institusi perlu rancangan sebelum release. Status GO untuk percobaan sintetis, HOLD untuk data nyata dan release. Lihatdocs/IMPLEMENTATION_REVIEW.md.

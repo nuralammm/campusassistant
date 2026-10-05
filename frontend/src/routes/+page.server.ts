@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { api } from '$lib/api.server';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ cookies }) => {
+export const load: PageServerLoad = async ({ cookies, url }) => {
   const token = cookies.get('campus_session');
   if (!token) return { dashboard: null, measurement: null, error: '' };
   try {
@@ -12,7 +12,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
       return { dashboard: null, measurement: null, error: 'Sesi berakhir. Silakan masuk kembali.' };
     }
     if (!classes.ok) return { dashboard: null, measurement: null, error: 'Akses kelas ditolak.' };
-    const cid = classes.payload[0]?.id;
+    const cid = url.searchParams.get('class') || classes.payload[0]?.id;
     if (!cid) return { dashboard: null, measurement: null, error: 'Belum ada kelas yang dapat diakses.' };
     const [dashboard, measurement] = await Promise.all([
       api(`/classes/${encodeURIComponent(cid)}/dashboard`, token),
@@ -56,6 +56,14 @@ export const actions: Actions = {
       if (!r.ok) return fail(r.status, { error: 'Persetujuan ditahan. Data mungkin berubah atau kontrol JEV aktif.' });
     } catch { return fail(503, { error: 'Backend belum tersedia.' }); }
     return { success: 'Rencana disetujui dan tercatat.' };
+  },
+  followup: async ({ request, cookies }) => {
+    const f = await request.formData();
+    try {
+      const r = await api(`/classes/${encodeURIComponent(String(f.get('class_id')))}/interventions/${encodeURIComponent(String(f.get('id')))}/followup`, cookies.get('campus_session'), { method: 'POST', body: JSON.stringify({ action: f.get('action'), notes: f.get('notes'), result_score: f.get('result_score') === '' ? null : Number(f.get('result_score')) }) });
+      if (!r.ok) return fail(r.status, { error: 'Status atau catatan tindak lanjut tidak valid.' });
+    } catch { return fail(503, { error: 'Backend tidak tersedia.' }); }
+    return { success: 'Tindak lanjut tersimpan.' };
   },
   measure: async ({ request, cookies }) => {
     const form = await request.formData();
