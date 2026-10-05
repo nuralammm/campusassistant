@@ -1,0 +1,28 @@
+import { test, expect } from '@playwright/test';
+test('login, outcomes, review and pilot measurement', async ({ page }, testInfo) => {
+  if (!process.env.DEMO_PASSWORD) throw new Error('Set DEMO_PASSWORD for the synthetic database');
+  await page.goto('/');
+  await page.getByLabel('Password', { exact: true }).fill(process.env.DEMO_PASSWORD);
+  await page.getByRole('button', { name: 'Masuk ke workspace' }).click();
+  await expect(page.getByRole('heading', { name: 'Setiap capaian, langkah berikutnya.' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Mahasiswa Sintetis 10' })).toBeVisible();
+  const row = page.getByRole('row').filter({ hasText: 'Mahasiswa Sintetis 03' });
+  await row.getByRole('button', { name: 'Buat draft' }).click();
+  await expect(page.getByRole('status')).toContainText('Draft intervensi');
+  await page.getByRole('button', { name: 'Intervensi', exact: false }).first().click();
+  await expect(page.getByRole('heading', { name: 'STD-003', exact: true })).toBeVisible();
+  const approve = page.getByRole('button', { name: 'Setujui rencana setelah review' });
+  if (await approve.count()) await approve.first().click();
+  await expect(page.getByText('Disetujui', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Evaluasi pilot' }).click();
+  await page.getByLabel('ID kasus').fill(`E2E-${testInfo.project.name}-${Date.now()}`);
+  await page.getByLabel('Waktu kerja (menit)').fill('5');
+  await page.getByRole('button', { name: 'Simpan pengukuran' }).click();
+  await expect(page.getByRole('status')).toContainText('Pengukuran tersimpan');
+  await page.getByRole('button', { name: 'Ringkasan kelas' }).click();
+  const viewport = page.viewportSize();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport!.width);
+  await page.screenshot({ path: `/tmp/campus-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole('button', { name: 'Keluar', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
+});

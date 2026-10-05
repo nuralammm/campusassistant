@@ -1,0 +1,22 @@
+import {test,expect} from '@playwright/test';
+test('lecturer academic input, report and provider readiness',async({page},info)=>{
+ if(!process.env.DEMO_PASSWORD)throw new Error('Set DEMO_PASSWORD');
+ await page.goto('/');await page.getByLabel('Password',{exact:true}).fill(process.env.DEMO_PASSWORD);
+ await page.getByRole('button',{name:'Masuk ke workspace'}).click();
+ await expect(page.getByRole('heading',{name:'Setiap capaian, langkah berikutnya.'})).toBeVisible();
+ await page.getByRole('link',{name:'Data Akademik',exact:false}).first().click();
+ await page.getByRole('button',{name:'Input nilai',exact:true}).click();
+ await expect(page.getByLabel('STD-003 ASM-02',{exact:true})).toHaveValue('52');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
+ await page.screenshot({path:`/tmp/campus-academic-${info.project.name}.png`,fullPage:true});
+ await page.getByRole('button',{name:'CPMK / CPL',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Target dan pemetaan capaian'})).toBeVisible();
+ await page.getByRole('link',{name:'Laporan & ekspor',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Laporan CPMK dan CPL'})).toBeVisible();
+ const download=page.waitForEvent('download');await page.getByRole('link',{name:'Unduh CSV'}).click();
+ expect((await download).suggestedFilename()).toBe('campus-outcomes.csv');
+ await page.getByRole('link',{name:'Ringkasan',exact:true}).click();
+ await page.getByRole('link',{name:'Provider AI',exact:false}).click();
+ await expect(page.getByRole('heading',{name:'Draft berbukti, kendali dosen.'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Buat draft AI untuk review'})).toBeDisabled();
+});

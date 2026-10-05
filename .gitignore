@@ -9,3 +9,17 @@ node_modules/
 .svelte-kit/
 data/raw/
 logs/
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-journal
+node_modules/
+.svelte-kit/
+frontend/build/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+frontend/test-results/
+frontend/playwright-report/
