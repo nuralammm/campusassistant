@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, isRedirect } from '@sveltejs/kit';
 import { api } from '$lib/api.server';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -6,6 +6,8 @@ export const load: PageServerLoad = async ({ cookies, url }) => {
   const token = cookies.get('campus_session');
   if (!token) return { dashboard: null, measurement: null, error: '' };
   try {
+    const identity = await api('/auth/me', token);
+    if (identity.ok && identity.payload.role !== 'lecturer') redirect(303, '/portal');
     const classes = await api('/classes', token);
     if (classes.status === 401) {
       cookies.delete('campus_session', { path: '/' });
@@ -20,7 +22,8 @@ export const load: PageServerLoad = async ({ cookies, url }) => {
     ]);
     return { dashboard: dashboard.ok ? dashboard.payload : null,
       measurement: measurement.ok ? measurement.payload : null, error: dashboard.ok ? '' : 'Dashboard tidak tersedia.' };
-  } catch {
+  } catch (e) {
+    if (isRedirect(e)) throw e;
     return { dashboard: null, measurement: null, error: 'Backend belum tersedia. Periksa layanan API.' };
   }
 };
@@ -33,7 +36,8 @@ export const actions: Actions = {
       if (!r.ok) return fail(r.status, { error: r.payload.detail || 'Gagal masuk.' });
       cookies.set('campus_session', r.payload.token, { path: '/', httpOnly: true, sameSite: 'lax', secure: url.protocol === 'https:', maxAge: 28800 });
     } catch { return fail(503, { error: 'Backend belum tersedia.' }); }
-    redirect(303, '/');
+    const identity = await api('/auth/me', cookies.get('campus_session'));
+    redirect(303, identity.payload.role === 'lecturer' ? '/' : '/portal');
   },
   logout: async ({ cookies }) => {
     try { await api('/auth/logout', cookies.get('campus_session'), { method: 'POST' }); } catch { /* Always clear browser session. */ }

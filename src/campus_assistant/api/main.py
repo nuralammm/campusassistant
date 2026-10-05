@@ -36,7 +36,7 @@ def allowed(db, user, cid, lock=False):
         raise HTTPException(403, "Akses kelas ditolak")
     query = select(CourseClass).where(CourseClass.id == cid)
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     course = db.scalar(query)
     if not course:
         raise HTTPException(404, "Kelas tidak ditemukan")
@@ -82,7 +82,7 @@ def login(body: Login, request: Request, db: Session = Depends(get_db)):
     token = secrets.token_urlsafe(32)
     db.add(LoginSession(token_hash=token_hash(token), user_id=user.id, expires=int(now) + 28800))
     db.commit()
-    return {"token": token, "expires_in": 28800, "username": user.id}
+    return {"token": token, "expires_in": 28800, "username": user.id, "role": user.role}
 
 @app.post("/auth/logout")
 def logout(credentials: HTTPAuthorizationCredentials = Depends(bearer), user=Depends(current_user), db: Session = Depends(get_db)):
@@ -106,7 +106,7 @@ def dashboard(cid: str, user=Depends(current_user), db: Session = Depends(get_db
     interventions = db.scalars(select(Intervention).where(Intervention.class_id == cid)).all()
     return {"id": cid, "name": course.name, "cpmk_ids": [c["id"] for c in json.loads(course.policy_json)["cpmks"]], "students": rows,
             "interventions": [{"id": i.id, "student_id": i.student_id, "status": i.status,
-                               "followup": json.loads(i.followup_json), "content": json.loads(i.content_json)} for i in interventions],
+                               "submission": db.get(StudentSubmission,i.id).notes if db.get(StudentSubmission,i.id) else None, "followup": json.loads(i.followup_json), "content": json.loads(i.content_json)} for i in interventions],
             "roi_status": "HOLD", "draft_method": "rule-based", "synthetic": True}
 
 class DraftRequest(BaseModel):
@@ -445,3 +445,191 @@ def roi_scenario(cid: str, body: ROIScenario, user=Depends(current_user), db: Se
     allowed(db, user, cid)
     from campus_assistant.pilot.roi import ROIInput, calculate
     return {"scenario_only": True, "release_decision": "HOLD", "metrics": calculate(ROIInput(**body.model_dump()))}
+
+from campus_assistant.api.db import StudentAccount, StudentSubmission, AIBudget, AIRun
+from campus_assistant.api.security import hash_password
+
+@app.get('/auth/me')
+def me(user=Depends(current_user)):
+    return {'username':user.id,'role':user.role}
+
+class AccountCreate(BaseModel):
+    username: str = Field(pattern=r'^[A-Za-z0-9_-]{1,40}$')
+    password: str = Field(min_length=12,max_length=200)
+    role: Literal['student','prodi']
+    student_id: str | None = Field(default=None,max_length=40)
+
+@app.post('/classes/{cid}/accounts',status_code=201)
+def provision_account(cid: str,body: AccountCreate,user=Depends(current_user),db: Session=Depends(get_db)):
+    allowed(db,user,cid,lock=True)
+    if db.get(User,body.username):
+        raise HTTPException(409,'Username sudah digunakan; akun tidak ditimpa')
+    if body.role=='student':
+        student_in(db,cid,body.student_id)
+        if db.scalar(select(StudentAccount).where(StudentAccount.student_id==body.student_id)):
+            raise HTTPException(409,'Mahasiswa sudah memiliki akun')
+    db.add(User(id=body.username,role=body.role,password_hash=hash_password(body.password)))
+    db.flush()
+    if body.role=='student':
+        db.add(StudentAccount(user_id=body.username,student_id=body.student_id))
+    else:
+        db.add(Membership(user_id=body.username,class_id=cid))
+    audit(db,user,'portal_account_created',cid)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409,'Identitas akun sudah digunakan')
+    return {'username':body.username,'role':body.role}
+
+@app.get('/portal/student')
+def student_portal(user=Depends(current_user),db: Session=Depends(get_db)):
+    if user.role!='student':
+        raise HTTPException(403,'Portal ini khusus mahasiswa')
+    account=db.get(StudentAccount,user.id)
+    if not account:
+        raise HTTPException(403,'Akun belum terhubung ke mahasiswa')
+    student=db.get(Student,account.student_id)
+    course=db.get(CourseClass,student.class_id)
+    _,outcome=snapshot(db,course,student.id)
+    plans=db.scalars(select(Intervention).where(Intervention.student_id==student.id,Intervention.status.in_(['approved','completed']))).all()
+    return {'student':{'id':student.id,'name':student.name},'class':{'id':course.id,'name':course.name},
+            'outcome':outcome,'interventions':[{'id':i.id,'status':i.status,'content':json.loads(i.content_json),
+                'followup':json.loads(i.followup_json),'submission':db.get(StudentSubmission,i.id).notes if db.get(StudentSubmission,i.id) else None} for i in plans]}
+
+class SubmissionInput(BaseModel):
+    notes: str = Field(min_length=5,max_length=2000)
+
+@app.post('/portal/student/interventions/{iid}/submit',status_code=201)
+def student_submit(iid: str,body: SubmissionInput,user=Depends(current_user),db: Session=Depends(get_db)):
+    if user.role!='student':
+        raise HTTPException(403,'Portal ini khusus mahasiswa')
+    account=db.get(StudentAccount,user.id)
+    item=db.get(Intervention,iid)
+    if not account or not item or item.student_id!=account.student_id or item.status!='approved':
+        raise HTTPException(404,'Rencana aktif tidak ditemukan')
+    if db.get(StudentSubmission,iid):
+        raise HTTPException(409,'Laporan pelaksanaan sudah dikirim')
+    db.add(StudentSubmission(intervention_id=iid,student_id=account.student_id,notes=body.notes,created=int(time.time())))
+    audit(db,user,'student_submission',iid)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409,'Laporan pelaksanaan sudah dikirim')
+    return {'status':'submitted','message':'Dosen akan meninjau; capaian dan nilai tidak diubah'}
+
+@app.get('/portal/prodi')
+def prodi_portal(user=Depends(current_user),db: Session=Depends(get_db)):
+    if user.role!='prodi':
+        raise HTTPException(403,'Portal ini khusus prodi')
+    courses=db.scalars(select(CourseClass).join(Membership).where(Membership.user_id==user.id)).all()
+    results=[]
+    for course in courses:
+        students=db.scalars(select(Student).where(Student.class_id==course.id)).all()
+        outcomes=[snapshot(db,course,s.id)[1] for s in students]
+        # Suppress outcome distributions for very small cohorts; no PII returned.
+        if len(students)<5:
+            results.append({'id':course.id,'name':course.name,'students':len(students),'suppressed':True,'cpls':[]})
+            continue
+        cpls=[]
+        for target in json.loads(course.policy_json)['cpl_targets']:
+            rows=[next(c for c in o['cpls'] if c['id']==target) for o in outcomes]
+            scores=[r['score'] for r in rows if r['score'] is not None]
+            cpls.append({'id':target,'mean':round(sum(scores)/len(scores),2) if scores else None,
+                         'complete':len(scores),'total':len(rows),'achieved':sum(r['status']=='achieved' for r in rows),
+                         'gap':sum(r['status']=='gap' for r in rows),'incomplete':sum(r['status']=='incomplete' for r in rows)})
+        results.append({'id':course.id,'name':course.name,'students':len(students),'suppressed':False,'cpls':cpls})
+    return {'scope':'course_only','classes':results,'release_decision':'HOLD'}
+
+@app.get('/classes/{cid}/ai')
+def ai_status(cid: str,user=Depends(current_user),db: Session=Depends(get_db)):
+    allowed(db,user,cid)
+    from campus_assistant.providers.llm import Settings,ProviderError
+    try:
+        settings=Settings.load()
+        config={'configured':True,'provider':settings.provider,'model':settings.model,'max_run_idr':settings.max_run_idr,'monthly_idr':settings.monthly_idr}
+    except ProviderError:
+        config={'configured':False,'provider':os.getenv('AI_PROVIDER','disabled'),'model':'','max_run_idr':0,'monthly_idr':0}
+    runs=db.scalars(select(AIRun).where(AIRun.class_id==cid).order_by(AIRun.created.desc()).limit(30)).all()
+    return {**config,'disabled':os.getenv('AGENT_DISABLED')=='1','runs':[{'id':r.id,'student_id':r.student_id,'status':r.status,'provider':r.provider,'model':r.model,'cost_idr':r.cost_idr,'latency_ms':r.latency_ms,'input_tokens':r.input_tokens,'output_tokens':r.output_tokens,'intervention_id':r.intervention_id} for r in runs]}
+
+@app.post('/classes/{cid}/interventions/ai',status_code=201)
+def ai_draft(cid: str,body: DraftRequest,user=Depends(current_user),db: Session=Depends(get_db)):
+    from campus_assistant.providers.llm import Settings,ProviderError,messages_for,generate
+    from datetime import datetime,timezone
+    course=allowed(db,user,cid,lock=True)
+    student_in(db,cid,body.student_id)
+    existing=db.scalar(select(AIRun).where(AIRun.class_id==cid,AIRun.key==body.idempotency_key))
+    if existing:
+        if existing.student_id!=body.student_id:
+            raise HTTPException(409,'Idempotency key digunakan untuk kasus lain')
+        return {'run_id':existing.id,'status':existing.status,'intervention_id':existing.intervention_id}
+    try:
+        settings=Settings.load()
+    except ProviderError:
+        raise HTTPException(503,'Provider belum dikonfigurasi atau tarif/budget tidak valid')
+    digest,outcome=snapshot(db,course,body.student_id)
+    gaps=[c for c in outcome['cpmks'] if c['status']=='gap']
+    if not gaps:
+        raise HTTPException(409,'Tidak ada learning gap')
+    check=decide(Context(True,'draft_intervention',tuple(e for c in gaps for e in c['evidence_ids']),digest,digest,
+                         missing_required=not all(c['complete'] for c in outcome['cpmks']),kill_switch=os.getenv('AGENT_DISABLED')=='1'))
+    if check.status!=Status.PROCEED:
+        raise HTTPException(409,{'decision':check.status.value,'reason':check.reason})
+    try:
+        messages=messages_for(gaps)
+    except ProviderError:
+        raise HTTPException(422,'Konteks terlalu besar')
+    # Reserve a conservative bound including schema/framing before external call.
+    from campus_assistant.providers.llm import Recommendation
+    input_bound=sum(len(m['content'].encode()) for m in messages)+len(json.dumps(Recommendation.model_json_schema()).encode())+1024
+    reserve=settings.cost(input_bound,settings.max_output)
+    period=datetime.now(timezone.utc).strftime('%Y-%m')
+    budget=db.get(AIBudget,(cid,period))
+    if not budget:
+        budget=AIBudget(class_id=cid,period=period,committed_idr=0)
+        db.add(budget);db.flush()
+    count=db.scalar(select(__import__('sqlalchemy').func.count()).select_from(AIRun).where(AIRun.class_id==cid,AIRun.created>=int(datetime.now(timezone.utc).replace(day=1,hour=0,minute=0,second=0,microsecond=0).timestamp())))
+    if reserve>settings.max_run_idr or budget.committed_idr+reserve>settings.monthly_idr or count>=300:
+        raise HTTPException(409,'Budget atau batas 300 run bulanan tercapai')
+    budget.committed_idr+=reserve
+    run=AIRun(id=str(uuid4()),class_id=cid,student_id=body.student_id,key=body.idempotency_key,provider=settings.provider,model=settings.model,
+              status='running',snapshot_hash=digest,reserved_idr=reserve,cost_idr=reserve,input_tokens=0,output_tokens=0,latency_ms=0,created=int(time.time()))
+    db.add(run);audit(db,user,'ai_reserved',run.id);db.commit()
+    run_id=run.id
+    started=time.monotonic()
+    result=None;inputs=outputs=0;failure=None
+    try:
+        result,inputs,outputs=generate(settings,messages,gaps)
+        if inputs>input_bound or time.monotonic()-started>60:
+            failure='usage_or_time_limit'
+    except ProviderError as exc:
+        failure=str(exc)
+    db.expire_all()
+    course=allowed(db,user,cid,lock=True)
+    run=db.get(AIRun,run_id)
+    run.latency_ms=int((time.monotonic()-started)*1000)
+    current_digest,_=snapshot(db,course,body.student_id)
+    if not failure and (current_digest!=digest or os.getenv('AGENT_DISABLED')=='1'):
+        failure='stale_or_disabled'
+    run.input_tokens=inputs;run.output_tokens=outputs
+    # Failed/uncertain calls retain full reservation: timeouts can still be billed.
+    if result is not None and inputs<=input_bound:
+        actual=settings.cost(inputs,outputs)
+        budget=db.get(AIBudget,(cid,period));budget.committed_idr-=reserve-actual
+        run.cost_idr=actual
+    if failure:
+        run.status='failed' if failure!='stale_or_disabled' else 'blocked'
+        audit(db,user,'ai_'+run.status,run.id);db.commit()
+        raise HTTPException(502,'Run AI ditahan/gagal. Lihat log run; gunakan draft berbasis aturan bila diperlukan.')
+    content=result.model_dump()
+    content.update({'method':'ai','provider':settings.provider,'model':settings.model,'run_id':run.id,'prompt_version':'academic-v1','formula_version':outcome['formula_version']})
+    for a in content['activities']:
+        a['gap']=next(g['gap'] for g in gaps if g['id']==a['cpmk_id'])
+    item=Intervention(id=str(uuid4()),class_id=cid,student_id=body.student_id,snapshot_hash=digest,content_json=json.dumps(content),
+                      status='draft',key='ai-'+run.id)
+    db.add(item);db.flush()
+    run.status='succeeded';run.intervention_id=item.id
+    audit(db,user,'ai_draft_created',item.id);db.commit()
+    return {'run_id':run.id,'status':run.status,'intervention_id':item.id}

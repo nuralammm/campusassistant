@@ -9,7 +9,10 @@ from campus_assistant.api.security import hash_password
 
 @pytest.fixture
 def client(tmp_path):
-    engine = make_engine(f"sqlite:///{tmp_path}/test.db")
+    import os
+    engine = make_engine(os.getenv("TEST_DATABASE_URL") or f"sqlite:///{tmp_path}/test.db")
+    if os.getenv("TEST_DATABASE_URL"):
+        Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     with factory() as db:
@@ -150,3 +153,76 @@ def test_reject_and_roi_scenario(client):
     assert r.status_code==200 and r.json()['release_decision']=='HOLD'
     assert float(r.json()['metrics']['horizon_roi_pct'])==20
     assert c.post('/classes/RPL-01/roi/scenario',headers=h,json=body|{'value_per_hour':-1}).status_code==422
+
+def test_portal_identity_and_student_submission(client):
+    c,_=client;h=auth(c)
+    for name,sid in [('student1','STD-003'),('student2','STD-004')]:
+        assert c.post('/classes/RPL-01/accounts',headers=h,json={'username':name,'password':'test-password-123','role':'student','student_id':sid}).status_code==201
+    s1=auth(c,'student1');s2=auth(c,'student2')
+    assert c.get('/auth/me',headers=s1).json()['role']=='student'
+    assert c.get('/classes/RPL-01/dashboard',headers=s1).status_code==403
+    assert c.get('/portal/student',headers=s1).json()['student']['id']=='STD-003'
+    iid=c.post('/classes/RPL-01/interventions',headers=h,json={'student_id':'STD-003','idempotency_key':'student-plan-003'}).json()['id']
+    assert c.get('/portal/student',headers=s1).json()['interventions']==[]
+    c.post(f'/classes/RPL-01/interventions/{iid}/approve',headers=h)
+    assert len(c.get('/portal/student',headers=s1).json()['interventions'])==1
+    assert c.post(f'/portal/student/interventions/{iid}/submit',headers=s2,json={'notes':'Wrong student attempt'}).status_code==404
+    assert c.post(f'/portal/student/interventions/{iid}/submit',headers=s1,json={'notes':'Latihan selesai dan siap ditinjau dosen'}).status_code==201
+    assert c.post(f'/portal/student/interventions/{iid}/submit',headers=s1,json={'notes':'Duplicate submission'}).status_code==409
+    assert c.get('/classes/RPL-01/dashboard',headers=h).json()['interventions'][0]['submission']
+    assert c.get('/portal/prodi',headers=s1).status_code==403
+
+def test_prodi_scoped_aggregation_and_small_cohort(client):
+    c,_=client;h=auth(c)
+    c.post('/classes/RPL-01/accounts',headers=h,json={'username':'program','password':'test-password-123','role':'prodi'})
+    p=auth(c,'program')
+    result=c.get('/portal/prodi',headers=p).json()
+    assert result['scope']=='course_only' and result['classes'][0]['students']==10
+    assert 'STD-003' not in str(result) and 'Mahasiswa Sintetis' not in str(result)
+    assert c.get('/classes/RPL-01/academic',headers=p).status_code==403
+    c.post('/classes',headers=h,json={'id':'SMALL','name':'Small cohort'})
+    c.post('/classes/SMALL/accounts',headers=h,json={'username':'programsmall','password':'test-password-123','role':'prodi'})
+    small=auth(c,'programsmall')
+    result=c.get('/portal/prodi',headers=small).json()
+    assert len(result['classes'])==1 and result['classes'][0]['suppressed']
+
+def fake_recommendation(gaps):
+    from campus_assistant.providers.llm import Recommendation
+    return Recommendation.model_validate({'activities':[{'cpmk_id':g['id'],'evidence_ids':g['evidence_ids'],'task':'Kerjakan latihan perbaikan yang relevan lalu diskusikan hasilnya.','duration_minutes':30,'assessment_plan':'Dosen menilai ulang dengan rubrik yang sama.'} for g in gaps]})
+
+def test_ai_success_idempotency_and_failed_run(client,monkeypatch):
+    from campus_assistant.providers import llm
+    from campus_assistant.api.db import AIRun
+    c,factory=client;h=auth(c)
+    monkeypatch.setenv('AI_PROVIDER','ollama');monkeypatch.setenv('AI_MODEL','test-local')
+    monkeypatch.setattr(llm,'generate',lambda settings,messages,gaps:(fake_recommendation(gaps),10,20))
+    body={'student_id':'STD-003','idempotency_key':'ai-valid-003'}
+    first=c.post('/classes/RPL-01/interventions/ai',headers=h,json=body)
+    assert first.status_code==201 and first.json()['status']=='succeeded'
+    again=c.post('/classes/RPL-01/interventions/ai',headers=h,json=body)
+    assert again.json()['run_id']==first.json()['run_id']
+    def fail(*args):raise llm.ProviderError('provider_failed')
+    monkeypatch.setattr(llm,'generate',fail)
+    assert c.post('/classes/RPL-01/interventions/ai',headers=h,json={'student_id':'STD-004','idempotency_key':'ai-failed-004'}).status_code==502
+    with factory() as db:
+        runs=db.scalars(select(AIRun)).all();assert len(runs)==2 and {r.status for r in runs}=={'succeeded','failed'}
+    assert c.get('/classes/RPL-01/ai',headers=h).json()['configured']
+
+def test_ai_budget_stale_and_authorization(client,monkeypatch):
+    from campus_assistant.providers import llm
+    c,_=client;h=auth(c)
+    monkeypatch.setenv('AI_PROVIDER','ollama');monkeypatch.setenv('AI_MODEL','test-local')
+    monkeypatch.setenv('AI_INPUT_IDR_PER_MILLION','1000000');monkeypatch.setenv('AI_OUTPUT_IDR_PER_MILLION','1000000');monkeypatch.setenv('AI_MAX_RUN_IDR','1')
+    def unexpected(*args):raise AssertionError('provider must not run')
+    monkeypatch.setattr(llm,'generate',unexpected)
+    body={'student_id':'STD-003','idempotency_key':'budget-blocked-003'}
+    assert c.post('/classes/RPL-01/interventions/ai',headers=h,json=body).status_code==409
+    monkeypatch.setenv('AI_MAX_RUN_IDR','5000')
+    def mutate(settings,messages,gaps):
+        c.put('/classes/RPL-01/students/STD-003/scores/ASM-02',headers=h,json={'value':60})
+        return fake_recommendation(gaps),10,20
+    monkeypatch.setattr(llm,'generate',mutate)
+    assert c.post('/classes/RPL-01/interventions/ai',headers=h,json=body).status_code==502
+    assert c.get('/classes/RPL-01/ai',headers=h).json()['runs'][0]['status']=='blocked'
+    outsider=auth(c,'outsider')
+    assert c.get('/classes/RPL-01/ai',headers=outsider).status_code==403

@@ -87,3 +87,40 @@ def make_engine(url=None):
 
 engine = make_engine()
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
+
+class StudentAccount(Base):
+    __tablename__ = "student_accounts"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id"), unique=True)
+
+class StudentSubmission(Base):
+    __tablename__ = "student_submissions"
+    intervention_id: Mapped[str] = mapped_column(ForeignKey("interventions.id"), primary_key=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id"))
+    notes: Mapped[str] = mapped_column(Text)
+    created: Mapped[int] = mapped_column(Integer)
+
+class AIBudget(Base):
+    __tablename__ = "ai_budgets"
+    class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"), primary_key=True)
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)
+    committed_idr: Mapped[int] = mapped_column(Integer, default=0)
+
+class AIRun(Base):
+    __tablename__ = "ai_runs"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"))
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id"))
+    key: Mapped[str] = mapped_column(String(80))
+    provider: Mapped[str] = mapped_column(String(20))
+    model: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(30))
+    snapshot_hash: Mapped[str] = mapped_column(String(64))
+    reserved_idr: Mapped[int] = mapped_column(Integer)
+    cost_idr: Mapped[int] = mapped_column(Integer)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    intervention_id: Mapped[str | None] = mapped_column(ForeignKey("interventions.id"), nullable=True)
+    created: Mapped[int] = mapped_column(Integer)
+    __table_args__ = (UniqueConstraint("class_id", "key"),)

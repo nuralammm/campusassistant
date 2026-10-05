@@ -26,6 +26,7 @@ export const actions: Actions = {
     try {
       if (op === 'class') { path = '/classes'; body = { id: f.get('id'), name: f.get('name') }; }
       else if (op === 'student') { path = `/classes/${cid}/students`; body = { id: f.get('id'), name: f.get('name') }; }
+      else if (op === 'account') { path = `/classes/${cid}/accounts`; body = { username: f.get('username'), password: f.get('password'), role: f.get('role'), student_id: f.get('role') === 'student' ? f.get('student_id') : null }; }
       else if (op === 'rename') { path = `/classes/${cid}/students/${encodeURIComponent(String(f.get('id')))}`; method = 'PUT'; body = { name: f.get('name') }; }
       else if (op === 'policy') { path = `/classes/${cid}/policy`; method = 'PUT'; body = { expected_revision: Number(f.get('revision')), policy: JSON.parse(String(f.get('policy'))) }; }
       else if (op === 'scores') {
