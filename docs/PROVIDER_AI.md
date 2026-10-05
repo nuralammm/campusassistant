@@ -39,3 +39,10 @@ Run normal seed first. Creates usernames mahasiswa (STD-003) and prodi (RPL-01) 
 https://docs.ollama.com/api/chat
 https://docs.ollama.com/capabilities/structured-outputs
 https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+
+## Verification — 2026-10-05
+GitHub Actions run 37278680745 passed backend, frontend and PostgreSQL 18 jobs. PostgreSQL verification includes Alembic upgrade → downgrade → upgrade and the concurrent budget reservation test. Local SQLite suite: 32 passed, PostgreSQL-only test skipped locally.
+
+Eight real Chromium browser tests passed: four desktop and four mobile covering academic input, CSV export, provider readiness, intervention approval, pilot measurement, student self-access and program aggregates. Screenshots were visually inspected; mobile navigation wraps and horizontal tables scroll within their container. Browser suites use synthetic SQLite data, not PostgreSQL; PostgreSQL is verified separately through API integration tests. Each browser project restarts the isolated API to keep login throttling intact without cross-suite interference.
+
+Run locally after frontend build: `uv run python scripts/browser_verify.py`. Playwright Chromium must be installed (`cd frontend && npx playwright install chromium`). Optional CHROMIUM_EXECUTABLE selects a compatible installed Chromium. Live Ollama/OpenAI behavior and educational ROI remain unverified; adapters were exercised with mocked HTTP responses.
