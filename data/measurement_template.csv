@@ -1,0 +1,1 @@
+case_id,arm,reviewer_id,snapshot_version,prompt_version,model_version,work_minutes,review_minutes,correction_minutes,provider_latency_seconds,provider_cost_idr,other_allocated_cost_idr,grounding_score,relevance_score,feasibility_score,clarity_score,safety_score,substantive_revision,failed,decision,notes
